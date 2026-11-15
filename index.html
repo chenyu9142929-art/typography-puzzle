@@ -1,0 +1,543 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>字体感知实验室 · Typography Puzzle</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f2f2ef;
+  color: #171717;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  text-align: center;
+}
+
+header {
+  padding: 28px 15px 12px;
+}
+
+h1 {
+  font-size: 25px;
+  letter-spacing: 3px;
+  margin: 0 0 8px;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: #888;
+  letter-spacing: 2px;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 18px auto;
+  padding: 0 12px;
+}
+
+button, .upload-label {
+  border: 1px solid #222;
+  background: transparent;
+  padding: 10px 20px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: .2s;
+}
+
+button:hover, .upload-label:hover {
+  background: #171717;
+  color: white;
+}
+
+#upload {
+  display: none;
+}
+
+#game {
+  width: min(96vw, 1000px);
+  margin: 0 auto;
+}
+
+canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+}
+
+.info {
+  display: flex;
+  justify-content: center;
+  gap: 45px;
+  flex-wrap: wrap;
+  padding: 12px;
+  font-size: 13px;
+  color: #666;
+}
+
+.info strong {
+  color: #111;
+  font-size: 17px;
+  margin-left: 6px;
+}
+
+.hint {
+  font-size: 12px;
+  color: #999;
+  padding: 12px 10px 35px;
+}
+
+#message {
+  min-height: 26px;
+  font-size: 15px;
+  font-weight: bold;
+  color: #171717;
+  padding: 5px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>字体感知实验室</h1>
+  <div class="subtitle">TYPOGRAPHY · PUZZLE EXPERIMENT</div>
+</header>
+
+<div class="toolbar">
+  <label class="upload-label" for="upload">上传字体作品</label>
+  <input type="file" id="upload" accept="image/*">
+  <button onclick="shufflePuzzle()">重新打乱</button>
+  <button onclick="resetPuzzle()">恢复原图</button>
+</div>
+
+<div class="info">
+  <div>交换次数 <strong id="moves">0</strong></div>
+  <div>正确方格 <strong id="correct">0 / 80</strong></div>
+  <div>完成进度 <strong id="progress">0%</strong></div>
+</div>
+
+<div id="message">请上传一张字体作品图片，开始拼图挑战</div>
+
+<div id="game"></div>
+
+<div class="hint">
+  点击并拖动任意方格，与另一个方格交换位置，完成整幅字体作品。
+</div>
+
+<script>
+
+// ========================
+// 基础参数
+// ========================
+
+const COLS = 10;
+const ROWS = 8;
+const TOTAL = COLS * ROWS;
+
+const CANVAS_W = 1000;
+const CANVAS_H = 850;
+
+const BOARD_X = 50;
+const BOARD_Y = 65;
+const BOARD_W = 900;
+const BOARD_H = 720;
+
+const CELL_W = BOARD_W / COLS;
+const CELL_H = BOARD_H / ROWS;
+
+let sourceImage = null;
+let tiles = [];
+
+let selected = -1;
+let moves = 0;
+let dragging = false;
+let started = false;
+
+// ========================
+// 初始化画布
+// ========================
+
+function setup() {
+  let canvas = createCanvas(CANVAS_W, CANVAS_H);
+  canvas.parent("game");
+
+  textFont("Arial");
+  textAlign(CENTER, CENTER);
+
+  document.getElementById("upload")
+    .addEventListener("change", handleUpload);
+
+  background("#f2f2ef");
+}
+
+// ========================
+// 上传图片
+// ========================
+
+function handleUpload(event) {
+  const file = event.target.files[0];
+
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+
+  loadImage(url, function(img) {
+    sourceImage = img;
+    initPuzzle();
+    shufflePuzzle();
+    started = true;
+    document.getElementById("message").innerText =
+      "游戏开始！尝试还原完整字体作品。";
+
+    URL.revokeObjectURL(url);
+  }, function() {
+    document.getElementById("message").innerText =
+      "图片加载失败，请重新选择图片。";
+    URL.revokeObjectURL(url);
+  });
+}
+
+// ========================
+// 初始化拼图
+// ========================
+
+function initPuzzle() {
+  tiles = [];
+
+  for (let i = 0; i < TOTAL; i++) {
+    tiles.push({ id: i });
+  }
+
+  moves = 0;
+  selected = -1;
+  dragging = false;
+
+  updateInfo();
+}
+
+// ========================
+// 随机打乱
+// ========================
+
+function shufflePuzzle() {
+  if (!sourceImage) {
+    document.getElementById("message").innerText =
+      "请先上传字体作品图片。";
+    return;
+  }
+
+  for (let i = tiles.length - 1; i > 0; i--) {
+    let j = floor(random(i + 1));
+
+    let temp = tiles[i];
+    tiles[i] = tiles[j];
+    tiles[j] = temp;
+  }
+
+  // 避免打乱后恰好已经完成
+  if (isComplete()) {
+    shufflePuzzle();
+    return;
+  }
+
+  moves = 0;
+  selected = -1;
+  dragging = false;
+  started = true;
+
+  updateInfo();
+
+  document.getElementById("message").innerText =
+    "挑战开始！";
+}
+
+// ========================
+// 恢复原图
+// ========================
+
+function resetPuzzle() {
+  if (!sourceImage) return;
+
+  for (let i = 0; i < TOTAL; i++) {
+    tiles[i] = { id: i };
+  }
+
+  moves = 0;
+  selected = -1;
+  dragging = false;
+
+  updateInfo();
+
+  document.getElementById("message").innerText =
+    "已恢复原始字体作品。";
+}
+
+// ========================
+// 绘制界面
+// ========================
+
+function draw() {
+  background("#f2f2ef");
+
+  // 顶部信息
+  noStroke();
+  fill("#777");
+  textSize(12);
+  textAlign(LEFT, CENTER);
+  text("10 × 8 GRID / 80 MODULES", BOARD_X, 30);
+
+  textAlign(RIGHT, CENTER);
+  text("TYPOGRAPHIC EXPERIMENT", BOARD_X + BOARD_W, 30);
+
+  // 拼图区域
+  if (!sourceImage) {
+    fill("#deded9");
+    rect(BOARD_X, BOARD_Y, BOARD_W, BOARD_H);
+
+    fill("#777");
+    textAlign(CENTER, CENTER);
+    textSize(20);
+    text("UPLOAD YOUR TYPOGRAPHY IMAGE",
+      width / 2, height / 2);
+
+    return;
+  }
+
+  // 绘制每个方格
+  for (let i = 0; i < TOTAL; i++) {
+
+    // 拖动时原位置暂时留空
+    if (dragging && i === selected) continue;
+
+    drawTile(i, tiles[i].id);
+  }
+
+  // 绘制当前拖动的方格
+  if (dragging && selected !== -1) {
+    let tileId = tiles[selected].id;
+
+    drawTileAt(
+      tileId,
+      mouseX - CELL_W / 2,
+      mouseY - CELL_H / 2
+    );
+
+    // 拖动选中框
+    noFill();
+    stroke("#ff5a36");
+    strokeWeight(4);
+
+    rect(
+      mouseX - CELL_W / 2,
+      mouseY - CELL_H / 2,
+      CELL_W,
+      CELL_H
+    );
+  }
+
+  // 外框
+  noFill();
+  stroke("#171717");
+  strokeWeight(2);
+  rect(BOARD_X, BOARD_Y, BOARD_W, BOARD_H);
+}
+
+// ========================
+// 绘制指定方格
+// ========================
+
+function drawTile(index, tileId) {
+
+  let col = index % COLS;
+  let row = floor(index / COLS);
+
+  let x = BOARD_X + col * CELL_W;
+  let y = BOARD_Y + row * CELL_H;
+
+  drawTileAt(tileId, x, y);
+}
+
+// ========================
+// 绘制图片切片
+// ========================
+
+function drawTileAt(tileId, x, y) {
+
+  let col = tileId % COLS;
+  let row = floor(tileId / COLS);
+
+  let sx = col * sourceImage.width / COLS;
+  let sy = row * sourceImage.height / ROWS;
+
+  let sw = sourceImage.width / COLS;
+  let sh = sourceImage.height / ROWS;
+
+  push();
+
+  image(
+    sourceImage,
+    x, y,
+    CELL_W, CELL_H,
+    sx, sy,
+    sw, sh
+  );
+
+  // 方格之间的细线
+  noFill();
+  stroke(255, 175);
+  strokeWeight(1);
+  rect(x, y, CELL_W, CELL_H);
+
+  pop();
+}
+
+// ========================
+// 鼠标 / 触摸按下
+// ========================
+
+function mousePressed() {
+
+  if (!sourceImage) return false;
+
+  let index = getTileIndex(mouseX, mouseY);
+
+  if (index === -1) return false;
+
+  selected = index;
+  dragging = true;
+
+  return false;
+}
+
+// ========================
+// 鼠标 / 触摸释放
+// ========================
+
+function mouseReleased() {
+
+  if (!dragging || selected === -1) return false;
+
+  let target = getTileIndex(mouseX, mouseY);
+
+  if (target !== -1 && target !== selected) {
+
+    // 任意两块方格交换
+    let temp = tiles[selected];
+    tiles[selected] = tiles[target];
+    tiles[target] = temp;
+
+    moves++;
+
+    updateInfo();
+
+    // 判断是否完成
+    if (isComplete()) {
+      document.getElementById("message").innerText =
+        "恭喜！你已经完成字体拼图！";
+    } else {
+      document.getElementById("message").innerText =
+        "继续挑战，寻找正确的文字结构。";
+    }
+  }
+
+  selected = -1;
+  dragging = false;
+
+  return false;
+}
+
+// ========================
+// 获取鼠标所在方格
+// ========================
+
+function getTileIndex(x, y) {
+
+  if (
+    x < BOARD_X ||
+    x >= BOARD_X + BOARD_W ||
+    y < BOARD_Y ||
+    y >= BOARD_Y + BOARD_H
+  ) {
+    return -1;
+  }
+
+  let col = floor((x - BOARD_X) / CELL_W);
+  let row = floor((y - BOARD_Y) / CELL_H);
+
+  return row * COLS + col;
+}
+
+// ========================
+// 判断拼图是否完成
+// ========================
+
+function isComplete() {
+
+  if (tiles.length !== TOTAL) return false;
+
+  for (let i = 0; i < TOTAL; i++) {
+    if (tiles[i].id !== i) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// ========================
+// 计算完成进度
+// ========================
+
+function updateInfo() {
+
+  let correctCount = 0;
+
+  for (let i = 0; i < TOTAL; i++) {
+    if (tiles[i].id === i) {
+      correctCount++;
+    }
+  }
+
+  let percent = Math.round(
+    correctCount / TOTAL * 100
+  );
+
+  document.getElementById("moves").innerText = moves;
+
+  document.getElementById("correct").innerText =
+    correctCount + " / " + TOTAL;
+
+  document.getElementById("progress").innerText =
+    percent + "%";
+}
+
+// ========================
+// 阻止浏览器默认拖动行为
+// ========================
+
+function touchStarted() {
+  mousePressed();
+  return false;
+}
+
+function touchEnded() {
+  mouseReleased();
+  return false;
+}
+
+</script>
+
+</body>
+</html>
